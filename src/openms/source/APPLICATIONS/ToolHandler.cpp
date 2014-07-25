@@ -192,6 +192,7 @@ namespace OpenMS
     util_map["IDDecoyProbability"] = Internal::ToolDescription("IDDecoyProbability", util_category);
     util_map["IDEvaluator"] = Internal::ToolDescription("IDEvaluator", util_category);
     util_map["IDExtractor"] = Internal::ToolDescription("IDExtractor", util_category);
+    util_map["IDGeneralizedDecoyModel"] = Internal::ToolDescription("IDGeneralizedDecoyModel", util_category);
     util_map["IDMassAccuracy"] = Internal::ToolDescription("IDMassAccuracy", util_category);
     util_map["IDSplitter"] = Internal::ToolDescription("IDSplitter", util_category);
     util_map["ImageCreator"] = Internal::ToolDescription("ImageCreator", util_category);

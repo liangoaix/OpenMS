@@ -29,6 +29,7 @@ FileMerger
 GenericWrapper
 HighResPrecursorMassCorrector
 IDConflictResolver
+IDGeneralizedDecoyModel
 IDPosteriorErrorProbability
 IDFileConverter
 IDFilter

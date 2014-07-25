@@ -9,6 +9,7 @@ ConsensusID.h
 FalseDiscoveryRate.h
 HiddenMarkovModel.h
 IDDecoyProbability.h
+IDGeneralizedDecoyModel.h
 IDMapper.h
 IDRipper.h
 MetaboliteSpectralMatching.h

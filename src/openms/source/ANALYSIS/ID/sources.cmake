@@ -11,6 +11,7 @@ HiddenMarkovModel.cpp
 IDMapper.cpp
 IDRipper.cpp
 IDDecoyProbability.cpp
+IDGeneralizedDecoyModel.cpp
 MetaboliteSpectralMatching.cpp
 PILISIdentification.cpp
 PILISModel.cpp
