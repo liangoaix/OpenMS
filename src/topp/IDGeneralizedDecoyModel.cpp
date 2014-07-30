@@ -106,7 +106,7 @@ protected:
     setValidFormats_("in", ListUtils::create<String>("idXML"));
     registerOutputFile_("out", "<file>", "", "Identification output with annotated PEP or q-values");
     setValidFormats_("out", ListUtils::create<String>("idXML"));
-    registerSubsection_("algorithm", "Parameter section for the FDR calculation algorithm");
+    registerSubsection_("algorithm", "Parameter section for the PEP (generalized decoy model) calculation algorithm");
 
     addEmptyLine_();
   }

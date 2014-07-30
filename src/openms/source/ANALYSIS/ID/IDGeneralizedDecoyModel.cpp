@@ -63,6 +63,8 @@ namespace OpenMS
     defaults_.setValue("output_name", "", "If output_plots is on, the output files will be saved in the following manner: <output_name>scores.txt for the scores and <output_name> which contains each step of the EM-algorithm e.g. output_name = /usr/home/OMSSA123 then /usr/home/OMSSA123_scores.txt, /usr/home/OMSSA123 will be written. If no directory is specified, e.g. instead of '/usr/home/OMSSA123' just OMSSA123, the files will be written into the working directory.", ListUtils::create<String>("advanced,output file"));
     defaults_.setValue("q_value", "false", "If 'true', q-values will be calculated based on the PEPs");
     defaults_.setValidStrings("q_value", ListUtils::create<String>("true,false"));
+    defaults_.setValue("original_score", "false", "The model will be calculated based on the given scores instead of e-values.");
+    defaults_.setValidStrings("original_score", ListUtils::create<String>("true,false"));
     defaults_.setValue("use_all_hits", "false", "If 'true' not only the first hit, but all are used (peptides only)");
     defaults_.setValidStrings("use_all_hits", ListUtils::create<String>("true,false"));
     defaults_.setValue("split_charge_variants", "false", "If set to 'true' charge variants are treated separately (for peptides of combined target/decoy searches only).");
@@ -74,19 +76,21 @@ namespace OpenMS
     defaults_.setValidStrings("add_decoy_peptides", ListUtils::create<String>("true,false"));
     defaults_.setValue("generalization_type", "inflated_MT", "Select different generalized methods");
     defaults_.setValidStrings("generalization_type", ListUtils::create<String>("inflated_MT,nonEnzymatic,PTM"));
+    
     defaultsToParam_();
   }
 
   void IDGeneralizedDecoyModel::apply(vector<PeptideIdentification>& ids)
   {
     bool q_value = param_.getValue("q_value").toBool();
+    bool original_score = param_.getValue("original_score").toBool();
     bool use_all_hits = param_.getValue("use_all_hits").toBool();
-    bool treat_runs_separately = param_.getValue("treat_runs_separately").toBool(); 
+    bool treat_runs_separately = param_.getValue("treat_runs_separately").toBool();
     bool split_charge_variants = param_.getValue("split_charge_variants").toBool();
     bool add_decoy_peptides = param_.getValue("add_decoy_peptides").toBool();
     Size number_of_bins = param_.getValue("number_of_bins");
     double bandwidth = param_.getValue("bandwidth_kernel");
-    String generalization_type = param_.getValue("generalization_type"); 
+    String generalization_type = param_.getValue("generalization_type");
 #ifdef ID_GENERALIZED_DECOY_MODEL_DEBUG
     cerr << "Parameters: q_value=" << q_value << ", use_all_hits=" << use_all_hits << ", treat_runs_separately=" << treat_runs_separately << ", split_charge_variants=" << split_charge_variants << ", number_of_bins=" << number_of_bins << ", bandwidth" << bandwidth << ", generalization_type = " << generalization_type << endl;
 #endif
@@ -165,15 +169,23 @@ namespace OpenMS
             {
               continue;
             }
+            double score;
+            if (original_score)
+            {
+			  score = (double)(it->getHits()[i].getScore());
+			} else
+			{
+			  score = -log10( (double)(it->getHits()[i].getMetaValue("E-Value")) );
+			}
             if (generalization_type == "nonEnzymatic")
             {
               if (it->getHits()[i].getAABefore() != 'R' && it->getHits()[i].getAABefore() != 'K')
               {
-                decoy_scores.push_back(it->getHits()[i].getScore());
+                decoy_scores.push_back(score);
               }
               else
               {
-                target_scores.push_back(it->getHits()[i].getScore());
+                target_scores.push_back(score);
               }
             }
             else if (generalization_type == "PTM")
@@ -181,25 +193,24 @@ namespace OpenMS
               String str = it->getHits()[i].getSequence().toString();
               if (str.find("Phospho") || str.find("Oxidation"))
               {
-                decoy_scores.push_back(it->getHits()[i].getScore());
+                decoy_scores.push_back(score);
               }
               else
               {
-                target_scores.push_back(it->getHits()[i].getScore());
+                target_scores.push_back(score);
               }
             }
             else
             {
               double cal_mass = (it->getHits()[i].getSequence().getMonoWeight() + (double)(it->getHits()[i].getCharge()) * Constants::PROTON_MASS_U) / (double)(it->getHits()[i].getCharge());
-              double exp_mass = (double)(it->getMetaValue("MZ"));
-
+              double exp_mass = (double)(it->getMZ()); //it->getMetaValue("MZ")
               if (fabs(cal_mass - exp_mass) / exp_mass * 1000000 > 10)
               {
-                decoy_scores.push_back(it->getHits()[i].getScore());
+                decoy_scores.push_back(score);
               }
               else
               {
-                target_scores.push_back(it->getHits()[i].getScore());
+                target_scores.push_back(score);
               }
             }
           }
@@ -249,54 +260,6 @@ namespace OpenMS
           LOG_ERROR << error_string << std::endl;
         }
 
-        if (target_scores.empty() || decoy_scores.empty())
-        {
-          // no remove the the relevant entries, or put 'pseudo-scores' in
-          for (vector<PeptideIdentification>::iterator it = ids.begin(); it != ids.end(); ++it)
-          {
-            // if runs should be treated separately, the identifiers must be the same
-            if (treat_runs_separately && it->getIdentifier() != *iit)
-            {
-              continue;
-            }
-
-            vector<PeptideHit> hits(it->getHits()), new_hits;
-            for (Size i = 0; i < hits.size(); ++i)
-            {
-              if (split_charge_variants && hits[i].getCharge() != *zit)
-              {
-                new_hits.push_back(hits[i]);
-                continue;
-              }
-
-              if (!hits[i].metaValueExists("target_decoy"))
-              {
-                LOG_FATAL_ERROR << "Meta value 'target_decoy' does not exists, reindex the idXML file with 'PeptideIndexer' first (run-id='" << it->getIdentifier() << ", rank=" << i + 1 << " of " << hits.size() << ")!" << endl;
-                throw Exception::MissingInformation(__FILE__, __LINE__, __PRETTY_FUNCTION__, "Meta value 'target_decoy' does not exist!");
-              }
-
-              String target_decoy(hits[i].getMetaValue("target_decoy"));
-              if (target_decoy == "target")
-              {
-                // if it is a target hit, there are now decoys, fdr/q-value should be zero then
-                new_hits.push_back(hits[i]);
-                String score_type = it->getScoreType() + "_score";
-                new_hits.back().setMetaValue(score_type, new_hits.back().getScore());
-                new_hits.back().setScore(0);
-              }
-              else
-              {
-                if (target_decoy != "decoy" && target_decoy != "target+decoy")
-                {
-                  LOG_FATAL_ERROR << "Unknown value of meta value 'target_decoy': '" << target_decoy << "'!" << endl;
-                }
-              }
-            }
-            it->setHits(new_hits);
-          }
-          continue;
-        }
-
         // calculate peps
         bool higher_score_better(ids.begin()->isHigherScoreBetter());
         Map<double, double> score_to_pep;
@@ -311,7 +274,9 @@ namespace OpenMS
           new_score_type = "PEP";
         }
 
+        //hits.metaRegistry().registerName(new_score_type, "calculated score of hit");
         // annotate peps
+
         for (vector<PeptideIdentification>::iterator it = ids.begin(); it != ids.end(); ++it)
         {
           // if runs should be treated separately, the identifiers must be the same
@@ -320,9 +285,9 @@ namespace OpenMS
             continue;
           }
 
-          // String score_type = it->getScoreType() + "_score";
+          String score_type = it->getScoreType() + "_score";
+          it->setScoreType(new_score_type);
           vector<PeptideHit> hits;
-          hits.metaRegistry().registerName(new_score_type, "calculated score of hit");
           for (vector<PeptideHit>::const_iterator pit = it->getHits().begin(); pit != it->getHits().end(); ++pit)
           {
             PeptideHit hit = *pit;
@@ -332,13 +297,14 @@ namespace OpenMS
               hits.push_back(*pit);
               continue;
             }
-            hit.setMetaValue(new_score_type, score_to_pep[pit->getScore()]);
-            hit.setScore(pit->getScore());
+            hit.setMetaValue(score_type, pit->getScore());
+            hit.setScore(score_to_pep[pit->getScore()]);
             hits.push_back(hit);
           }
           it->setHits(hits);
+          it->setHigherScoreBetter(false);
+          it->assignRanks();
         } // end: assign peps to peptide hits
-        
       } // end loop of identifiers.
       if (!split_charge_variants)
       {
@@ -350,19 +316,20 @@ namespace OpenMS
   }
 
   void IDGeneralizedDecoyModel::calculatePEPs_(Map<double, double>& score_to_pep,
-                                             vector<double>& target_scores, vector<double>& decoy_scores,
-                                             bool q_value, bool higher_score_better, bool add_decoy_peptides, Size number_of_bins, double bandwidth)
+                                               vector<double>& target_scores, vector<double>& decoy_scores,
+                                               bool q_value, bool higher_score_better, bool add_decoy_peptides, Size number_of_bins, double bandwidth)
   {
     vector<double> medians;
     vector<Int> decoysizes(number_of_bins);
     vector<Int> binscores(number_of_bins);
     binData_(target_scores, decoy_scores, medians, decoysizes, binscores, number_of_bins);
-
     double h = bandwidth;
     if (h == 0) { h = crossValidation_(medians, decoysizes, binscores); }
-    if (h <= 0 || h >= 50) { h = 10; }
+    if (h <= 0 || h >= 50) { h = 5; }
+
     vector<double> peps;
     estimatePEPGeneralized_(peps, target_scores, medians, decoysizes, binscores, h, higher_score_better);
+
     if (!q_value)
     {
       for (Size i = 0; i != target_scores.size(); ++i)
@@ -392,7 +359,7 @@ namespace OpenMS
   }
 
   void IDGeneralizedDecoyModel::estimatePEPGeneralized_(vector<double>& peps, vector<double> target,
-                                                      vector<double> x, std::vector<Int> y, std::vector<Int> m, double h, bool higher_score_better)
+                                                        vector<double> x, std::vector<Int> y, std::vector<Int> m, double h, bool higher_score_better)
   {
     if (target[0] < target.back() || higher_score_better)
     {
@@ -440,7 +407,7 @@ namespace OpenMS
       beta_old = beta;
     }
     while ((step > step_epsilon || step < 0.0) && (++iter < 100));
-// alphas and betas have been estimated...
+    // alphas and betas have been estimated...
 
     peps.clear();
     for (std::vector<double>::iterator it = target.begin(); it < target.end(); ++it)
@@ -487,7 +454,7 @@ namespace OpenMS
   }
 
   void IDGeneralizedDecoyModel::binData_(vector<double>& target, vector<double>& decoy, vector<double>& medians,
-                                       vector<Int>& decoys, vector<Int>& binscores, Size number_of_bins)
+                                         vector<Int>& decoys, vector<Int>& binscores, Size number_of_bins)
   {
     sort(target.begin(), target.end());
     sort(decoy.begin(), decoy.end());
@@ -584,36 +551,102 @@ namespace OpenMS
     bool higher_score_better = true;
     vector<double> targets = x;
     vector<double> q_values, peps;
-    for (Size hh = 1; hh < 50; ++hh)
+    if (x[0] < x.back() || higher_score_better)
     {
-      double h = hh;
-      estimatePEPGeneralized_(peps, targets, x, y, m, h, higher_score_better);
-      estimateQvaluesFromPEP_(q_values, peps);
-      Size num = 0;
-      for (vector<double>::const_iterator q = q_values.begin(); q != q_values.end(); ++q)
-      {
-        if (*q < 0.03) {++num; }
-      }
-      double idrate = (double)(num) / (double)(q_values.size());
-      cross_validation.push_back(idrate); //or calculate root mean square error.
-/*
-vector<double> Q_FDR;
-for (Size i = 0; i != targets.size(); ++i)
-{
-Size closest_idx = 0;
-for (Size j = 0; j != target_scores.size(); ++j)
-{
-if (fabs(targets[i] - target_scores[j]) < fabs(targets[i] - target_scores[closest_idx]))
-{
-closest_idx = j;
-}
-}
-Q_FDR.push_back( score_to_fdr[target_scores[closest_idx]]);
-}
-double Deltarms= Math::meanSquareError( q_values.begin(), q_values.end(), Q_FDR.begin(), Q_FDR.end());
-*/
+      reverse(x.begin(), x.end()); //target need to be descending
     }
-    double best_h = (double)(max_element(cross_validation.begin(), cross_validation.end()) - cross_validation.begin());
+    Size n = x.size();
+    double beta, h ;
+    double step_epsilon = 0.001;
+    
+    for (Size hh = 0; hh < 7; ++hh)
+    {
+      h = double(hh*3+1);
+      cout << h << endl;
+
+      Eigen::VectorXd g(n), ones(n), z(n), alphas(n);
+      Eigen::MatrixXd matrix_m(n, n), matrix_k(n, n), identity(n, n), matrix_c(n + 1, n + 1), matrix_c_inverse(n + 1, n + 1);
+      double beta_old = 0.0;
+      double step;
+      Size iter = 0;
+
+      for (Size i = 0; i < n; i++)
+      {
+        ones(i) = 1;
+        for (Size j = 0; j < n; j++)
+        {
+          matrix_k(i, j) = kernel(x[i], x[j], h);
+        }
+      }
+      alphas.setZero();
+      identity.setIdentity();
+      Eigen::MatrixXd matrix_w = identity;
+      do
+      {
+        g = matrix_k * alphas + beta_old * ones;
+        double sigma, mu, p;
+        for (Size ix = 0; ix < n; ix++)
+        {
+          assert(isfinite(g(ix)));
+          p = 1 / (1 + exp(-g(ix)));
+          mu = m[ix] * p;
+          if (mu == 0) {sigma = 1.0; }else{sigma = mu * (1 - p); }
+          z(ix) = g(ix) + (((double)y[ix]) - mu) / sigma;
+          matrix_w(ix, ix) = 1 / sigma;
+        }
+        matrix_m = matrix_k + matrix_w;
+        Eigen::MatrixXd L = matrix_m.llt().matrixL();
+        Eigen::VectorXd xi = (L * L.transpose()).colPivHouseholderQr().solve(ones); // (L*L.transpose()).inverse()*ones;
+        Eigen::VectorXd zeta = (L * L.transpose()).colPivHouseholderQr().solve(z); //(L*L.transpose()).inverse()*z;
+        beta = ones.dot(zeta) / ones.dot(xi);
+        alphas = zeta - beta * xi;
+        step = (beta_old - beta) * (beta_old - beta);
+        beta_old = beta;
+      }
+      while ((step > step_epsilon || step < 0.0) && (++iter < 100));
+      
+      matrix_c.block(0, 0, n, n) = matrix_m;
+      for (Size i = 0; i < n; i++)
+      { matrix_c(n,i) = 1;
+        matrix_c(i,n) = 1;
+      }
+      matrix_c_inverse = matrix_c.inverse();
+      double cv, g_cv;
+      for (Size i = 0; i < n; i++)
+      {
+        g_cv = z(i) - alphas(i) / matrix_c_inverse(i, i); // LOOCV
+        cv += (g_cv - g(i)) * (g_cv - g(i));
+        //g_cv = 1/(1+exp(-g_cv));
+        //cv += (double)y[i] * log10(g_cv) + (1 - (double)y[i] ) * log10(1 - g_cv) ; // cross-entropy
+      }
+      cout<< cv<<endl;
+      cross_validation.push_back(cv);
+      /*
+      estimatePEPGeneralized_(peps, targets, x, y, m, h, higher_score_better);
+      cout<<"cal_q for "<<h<<endl;
+      estimateQvaluesFromPEP_(q_values, peps);
+
+      cout<<"cal idrate "<< idrate<<endl;
+      cross_validation.push_back(idrate);
+      //or calculate root mean square error.
+
+      vector<double> Q_FDR;
+      for (Size i = 0; i != targets.size(); ++i)
+      {
+        Size closest_idx = 0;
+        for (Size j = 0; j != target_scores.size(); ++j)
+        {
+          if (fabs(targets[i] - target_scores[j]) < fabs(targets[i] - target_scores[closest_idx]))
+          {
+            closest_idx = j;
+          }
+        }
+        Q_FDR.push_back( score_to_fdr[target_scores[closest_idx]]);
+      }
+      double Deltarms= Math::meanSquareError( q_values.begin(), q_values.end(), Q_FDR.begin(), Q_FDR.end());
+      */
+    }
+    double best_h = (double)(min_element(cross_validation.begin(), cross_validation.end()) - cross_validation.begin());
     return best_h;
   }
 
