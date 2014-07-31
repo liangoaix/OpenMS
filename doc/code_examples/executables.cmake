@@ -35,6 +35,8 @@ Tutorial_MorphologicalFilter
 Tutorial_Unlabeled
 Tutorial_typeAsString
 Tutorial_PeakIntensityPredictor
+Test_AnalysisGeneralizedDecoy
+plot_q
 )
 
 # --------------------------------------------------------------------------

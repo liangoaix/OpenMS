@@ -163,6 +163,7 @@ namespace OpenMS
             continue;
           }
 
+          vector<PeptideHit> hits;
           for (Size i = 0; i < it->getHits().size(); ++i)
           {
             if (split_charge_variants && it->getHits()[i].getCharge() != *zit)
@@ -170,6 +171,7 @@ namespace OpenMS
               continue;
             }
             double score;
+            
             if (original_score)
             {
 			  score = (double)(it->getHits()[i].getScore());
@@ -182,10 +184,12 @@ namespace OpenMS
               if (it->getHits()[i].getAABefore() != 'R' && it->getHits()[i].getAABefore() != 'K')
               {
                 decoy_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","decoy");
               }
               else
               {
                 target_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","target");
               }
             }
             else if (generalization_type == "PTM")
@@ -194,10 +198,12 @@ namespace OpenMS
               if (str.find("Phospho") || str.find("Oxidation"))
               {
                 decoy_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","decoy");
               }
               else
               {
                 target_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","target");
               }
             }
             else
@@ -207,13 +213,17 @@ namespace OpenMS
               if (fabs(cal_mass - exp_mass) / exp_mass * 1000000 > 10)
               {
                 decoy_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","decoy");
               }
               else
               {
                 target_scores.push_back(score);
+                it->getHits()[i].setMetaValue("target-decoy","target");
               }
             }
+            hits.push_back(it->getHits()[i]);
           }
+          it->setHits(hits);
         }
 
 #ifdef GENERALIZED_DECOY_MODEL_DEBUG
@@ -302,8 +312,7 @@ namespace OpenMS
             hits.push_back(hit);
           }
           it->setHits(hits);
-          it->setHigherScoreBetter(false);
-          it->assignRanks();
+
         } // end: assign peps to peptide hits
       } // end loop of identifiers.
       if (!split_charge_variants)
@@ -311,7 +320,13 @@ namespace OpenMS
         break;
       }
     } // end loop of charge_variants.
-
+    
+    // higher-score-better can be set now, calculations are finished
+    for (vector<PeptideIdentification>::iterator it = ids.begin(); it != ids.end(); ++it)
+    {
+      it->setHigherScoreBetter(false);
+      it->assignRanks();
+    }
     return;
   }
 
@@ -384,6 +399,7 @@ namespace OpenMS
     double step;
     Size iter = 0;
     double step_epsilon = 0.0001;
+    // IRLS
     do
     {
       g = matrix_k * alphas + beta_old * ones;
