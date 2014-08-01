@@ -154,7 +154,7 @@ namespace OpenMS
         cerr << "Id-run: " << *iit << endl;
 #endif
         // get the scores of all peptide hits
-        vector<double> target_scores, decoy_scores;
+        vector<double> target_scores, decoy_scores, scores;
         for (vector<PeptideIdentification>::iterator it = ids.begin(); it != ids.end(); ++it)
         {
           // if runs should be treated separately, the identifiers must be the same
@@ -178,6 +178,10 @@ namespace OpenMS
 			} else
 			{
 			  score = -log10( (double)(it->getHits()[i].getMetaValue("E-Value")) );
+			}
+			if (add_decoy_peptides)
+			{
+			  scores.push_back(score);
 			}
             if (generalization_type == "nonEnzymatic")
             {
@@ -209,7 +213,7 @@ namespace OpenMS
             else
             {
               double cal_mass = (it->getHits()[i].getSequence().getMonoWeight() + (double)(it->getHits()[i].getCharge()) * Constants::PROTON_MASS_U) / (double)(it->getHits()[i].getCharge());
-              double exp_mass = (double)(it->getMZ()); //it->getMetaValue("MZ")
+              double exp_mass = (double)(it->getMZ());
               if (fabs(cal_mass - exp_mass) / exp_mass * 1000000 > 10)
               {
                 decoy_scores.push_back(score);
@@ -226,6 +230,10 @@ namespace OpenMS
           it->setHits(hits);
         }
 
+        if (!add_decoy_peptides)
+        {
+		  scores = target_scores;
+	    }
 #ifdef GENERALIZED_DECOY_MODEL_DEBUG
         cerr << "#target-scores=" << target_scores.size() << ", #decoy-scores=" << decoy_scores.size() << endl;
 #endif
@@ -273,7 +281,7 @@ namespace OpenMS
         // calculate peps
         bool higher_score_better(ids.begin()->isHigherScoreBetter());
         Map<double, double> score_to_pep;
-        calculatePEPs_(score_to_pep, target_scores, decoy_scores, q_value, higher_score_better, add_decoy_peptides, number_of_bins, bandwidth);
+        calculatePEPs_(score_to_pep, target_scores, decoy_scores, q_value, higher_score_better, scores, number_of_bins, bandwidth);
         String new_score_type;
         if (q_value)
         {
@@ -284,9 +292,7 @@ namespace OpenMS
           new_score_type = "PEP";
         }
 
-        //hits.metaRegistry().registerName(new_score_type, "calculated score of hit");
         // annotate peps
-
         for (vector<PeptideIdentification>::iterator it = ids.begin(); it != ids.end(); ++it)
         {
           // if runs should be treated separately, the identifiers must be the same
@@ -302,18 +308,26 @@ namespace OpenMS
           {
             PeptideHit hit = *pit;
 
-            if (split_charge_variants && pit->getCharge() != *zit)
+			if (split_charge_variants && pit->getCharge() != *zit)
             {
               hits.push_back(*pit);
               continue;
             }
             hit.setMetaValue(score_type, pit->getScore());
             hit.setScore(score_to_pep[pit->getScore()]);
-            hits.push_back(hit);
+            
+            if (!add_decoy_peptides && hit.getMetaValue("target-decoy") == "target")
+            {
+			  hits.push_back(hit);
+			} 
+			else if (add_decoy_peptides)
+            {
+			  hits.push_back(hit);  
+			}
+			
           }
-          it->setHits(hits);
-
-        } // end: assign peps to peptide hits
+          it->setHits(hits); 
+	    }// end: assign peps to peptide hits
       } // end loop of identifiers.
       if (!split_charge_variants)
       {
@@ -332,51 +346,51 @@ namespace OpenMS
 
   void IDGeneralizedDecoyModel::calculatePEPs_(Map<double, double>& score_to_pep,
                                                vector<double>& target_scores, vector<double>& decoy_scores,
-                                               bool q_value, bool higher_score_better, bool add_decoy_peptides, Size number_of_bins, double bandwidth)
+                                               bool q_value, bool higher_score_better, std::vector<double>& scores, Size number_of_bins, double bandwidth)
   {
     vector<double> medians;
     vector<Int> decoysizes(number_of_bins);
     vector<Int> binscores(number_of_bins);
+    
+    sort(target_scores.begin(), target_scores.end());
+    sort(decoy_scores.begin(), decoy_scores.end());
+    
+    if (higher_score_better && target_scores[0] > target_scores.back() )
+    {
+      reverse(target_scores.begin(), target_scores.end());
+      reverse(decoy_scores.begin(), decoy_scores.end());
+    }
     binData_(target_scores, decoy_scores, medians, decoysizes, binscores, number_of_bins);
     double h = bandwidth;
     if (h == 0) { h = crossValidation_(medians, decoysizes, binscores); }
     if (h <= 0 || h >= 50) { h = 5; }
 
     vector<double> peps;
-    estimatePEPGeneralized_(peps, target_scores, medians, decoysizes, binscores, h, higher_score_better);
+    estimatePEPGeneralized_(peps, scores, medians, decoysizes, binscores, h);
 
     if (!q_value)
     {
-      for (Size i = 0; i != target_scores.size(); ++i)
+      for (Size i = 0; i != scores.size(); ++i)
       {
-        score_to_pep[target_scores[i]] = peps[i];
+        score_to_pep[scores[i]] = peps[i];
       }
     }
     else
     {
       vector<double> q_values;
       estimateQvaluesFromPEP_(q_values, peps);
-      for (Size i = 0; i != target_scores.size(); ++i)
+      for (Size i = 0; i != scores.size(); ++i)
       {
-        score_to_pep[target_scores[i]] = q_values[i];
-      }
-    }
-
-    // assign q-value of decoy_score to closest target_score
-    if (add_decoy_peptides)
-    {
-      estimatePEPGeneralized_(peps, decoy_scores, medians, decoysizes, binscores, h, higher_score_better);
-      for (Size i = 0; i != decoy_scores.size(); ++i)
-      {
-        score_to_pep[decoy_scores[i]] = peps[i];
+        score_to_pep[scores[i]] = q_values[i];
       }
     }
   }
 
-  void IDGeneralizedDecoyModel::estimatePEPGeneralized_(vector<double>& peps, vector<double> target,
-                                                        vector<double> x, std::vector<Int> y, std::vector<Int> m, double h, bool higher_score_better)
-  {
-    if (target[0] < target.back() || higher_score_better)
+  void IDGeneralizedDecoyModel::estimatePEPGeneralized_(vector<double>& peps, vector<double> &target,
+                                                        vector<double> x, std::vector<Int> y, std::vector<Int> m, double h)
+  { 
+    sort(target.begin(),target.end());
+    if (target[0] < target.back())
     {
       reverse(target.begin(), target.end()); //target need to be descending
     }
@@ -438,7 +452,7 @@ namespace OpenMS
       peps.push_back(1 / (1 + exp(-gx)));
     }
 
-    double p1 = *min_element(peps.begin(), peps.end()) - 1 / (double)(target.size());
+    double p1 = *min_element(peps.begin(), peps.end()) - 1 / (double)(target.size()); 
     double p0 = *max_element(peps.begin(), peps.end());
     double top = 1;
     bool crap = false;
@@ -472,9 +486,6 @@ namespace OpenMS
   void IDGeneralizedDecoyModel::binData_(vector<double>& target, vector<double>& decoy, vector<double>& medians,
                                          vector<Int>& decoys, vector<Int>& binscores, Size number_of_bins)
   {
-    sort(target.begin(), target.end());
-    sort(decoy.begin(), decoy.end());
-
     double interval = (target.back() - target[0]) / number_of_bins;
     for (Size i = 0; i < number_of_bins - 1; ++i)
     {
@@ -564,10 +575,10 @@ namespace OpenMS
   double IDGeneralizedDecoyModel::crossValidation_(vector<double> x, vector<Int> y, vector<Int> m)
   {
     vector<double> cross_validation;
-    bool higher_score_better = true;
+   
     vector<double> targets = x;
     vector<double> q_values, peps;
-    if (x[0] < x.back() || higher_score_better)
+    if (x[0] < x.back())
     {
       reverse(x.begin(), x.end()); //target need to be descending
     }
@@ -578,7 +589,7 @@ namespace OpenMS
     for (Size hh = 0; hh < 7; ++hh)
     {
       h = double(hh*3+1);
-      cout << h << endl;
+      
 
       Eigen::VectorXd g(n), ones(n), z(n), alphas(n);
       Eigen::MatrixXd matrix_m(n, n), matrix_k(n, n), identity(n, n), matrix_c(n + 1, n + 1), matrix_c_inverse(n + 1, n + 1);
@@ -635,7 +646,7 @@ namespace OpenMS
         //g_cv = 1/(1+exp(-g_cv));
         //cv += (double)y[i] * log10(g_cv) + (1 - (double)y[i] ) * log10(1 - g_cv) ; // cross-entropy
       }
-      cout<< cv<<endl;
+      
       cross_validation.push_back(cv);
       /*
       estimatePEPGeneralized_(peps, targets, x, y, m, h, higher_score_better);

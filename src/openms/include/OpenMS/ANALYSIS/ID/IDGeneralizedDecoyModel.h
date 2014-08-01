@@ -84,13 +84,13 @@ private:
     IDGeneralizedDecoyModel& operator=(const IDGeneralizedDecoyModel&);
 
     /// calculates the fdr stored into fdrs, given two vectors of scores
-    void calculatePEPs_(Map<double, double>& score_to_fdr, std::vector<double>& target_scores, std::vector<double>& decoy_scores, bool q_value, bool higher_score_better, bool add_decoy_peptides, Size number_of_bins, double bandwidth);
+    void calculatePEPs_(Map<double, double>& score_to_fdr, std::vector<double>& target_scores, std::vector<double>& decoy_scores, bool q_value, bool higher_score_better, std::vector<double>& scores, Size number_of_bins, double bandwidth);
 
     /// divide target and decoy scores into bins for model and decoy probability estimation, given two vectors of target and decoy scores
     void binData_(std::vector<double>& target, std::vector<double>& decoy, std::vector<double>& medians, std::vector<Int>& decoys, std::vector<Int>& binscores, Size number_of_bins);
 
     /// calculating PEPs stored into peps by using a mixture model, given also the bandwidth h of the kernel logistic regression and parameters alphas and beta from IRLS.
-    void estimatePEPGeneralized_(std::vector<double>& peps, std::vector<double> target, std::vector<double> x, std::vector<Int> y, std::vector<Int> m, double h, bool higher_score_better);
+    void estimatePEPGeneralized_(std::vector<double>& peps, std::vector<double>& target, std::vector<double> x, std::vector<Int> y, std::vector<Int> m, double h);
 
     ///calculating Q-values from estimated PEPs
     void estimateQvaluesFromPEP_(std::vector<double>& q_values, std::vector<double>& peps);
